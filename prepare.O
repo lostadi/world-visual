@@ -1,0 +1,32 @@
+python^(
+from pathlib import Path
+import hashlib, os
+root = Path(os.environ.get('WORLD_VISUAL_ROOT', '.')).resolve()
+source_path = root / 'world.O'
+source = source_path.read_text()
+digest = hashlib.sha256(source_path.read_bytes()).hexdigest()
+# Instrument the existing update loop; retain its computation and oracle checks.
+assert source.count('initial_totals = totals(grid)') == 4
+source = source.replace('initial_totals = totals(grid)', 'initial_totals = totals(grid)\nframes = [grid.hex()]\ncollisions = [0]')
+assert source.count('        collision_events += hits') == 4
+source = source.replace('        collision_events += hits', '        collision_events += hits\n        frames.append(grid.hex())\n        collisions.append(collision_events)')
+assert source.count('"collision_events": collision_events,') == 4
+source = source.replace('"collision_events": collision_events,', '"collision_events": collision_events,\n    "frames": frames, "collisions": collisions,')
+source = source.replace('actual = dict(expected)', 'visuals = [{"frames": w.pop("frames"), "collisions": w.pop("collisions")} for w in world_summaries]\nactual = dict(expected)')
+anchor = 'actual["guest_system"] = platform.system()'
+assert source.count(anchor) == 1
+addition = '''
+from pathlib import Path
+from datetime import datetime, timezone
+import os
+payload = {"result": actual, "visuals": visuals, "source_sha256": "DIGEST", "captured_at": datetime.now(timezone.utc).isoformat()}
+root = Path(os.environ.get('WORLD_VISUAL_ROOT', '.')).resolve()
+encoded = json.dumps(payload, separators=(",", ":"))
+root.joinpath('capture.json').write_text(encoded)
+template = root.joinpath('template.html').read_text()
+root.joinpath('index.html').write_text(template.replace('__WORLD_DATA__', encoded))
+'''.replace('DIGEST', digest)
+source = source.replace(anchor, anchor + '\n' + addition)
+root.joinpath('captured-world.O').write_text(source)
+__oval_result__ = 'Prepared instrumented world.O; source SHA256 ' + digest
+)_python
